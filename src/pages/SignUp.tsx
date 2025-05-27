@@ -1,8 +1,7 @@
-// src/pages/SignUp.tsx
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom'; // Added useNavigate
-import { RegistrationData } from "../types/apiTypes"; // Ensure this path is correct
-import { apiService } from "../services/apiService"; // Ensure this path is correct
+import { Link, useNavigate } from 'react-router-dom';
+import { RegistrationData } from "../types/apiTypes";
+import { apiService } from "../services/apiService";
 
 const SignUp: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -11,10 +10,10 @@ const SignUp: React.FC = () => {
   const [lastName, setLastName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState(''); // This state holds the value for password2
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const navigate = useNavigate(); // For redirection
+  const navigate = useNavigate();
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -27,12 +26,11 @@ const SignUp: React.FC = () => {
 
     setIsLoading(true);
 
-    // Construct formData from state variables, including password2
     const formData: RegistrationData = {
       username,
       email,
       password,
-      password2: confirmPassword, // Pass the confirmPassword state as password2
+      password2: confirmPassword,
       first_name: firstName,
       last_name: lastName,
       phone_number: phoneNumber,
@@ -41,16 +39,13 @@ const SignUp: React.FC = () => {
     try {
       const user = await apiService.auth.register(formData);
       console.log('Registration successful', user);
-      // Redirect to login page with a success message
       navigate('/', { state: { message: 'Registration successful! Please log in.' } });
     } catch (err: any) {
       console.error('Registration failed', err);
-      // Attempt to parse backend error if it's an object
       let errorMessage = 'An unexpected error occurred during registration.';
       if (typeof err.message === 'string') {
         try {
           const parsedError = JSON.parse(err.message);
-          // Prefer specific field errors if available
           if (typeof parsedError === 'object' && parsedError !== null) {
             const fieldErrors = Object.entries(parsedError)
               .map(([key, value]) => `${key}: ${(Array.isArray(value) ? value.join(', ') : value)}`)
@@ -58,7 +53,6 @@ const SignUp: React.FC = () => {
             if (fieldErrors) errorMessage = fieldErrors;
           }
         } catch (e) {
-          // If parsing fails, use the original message
           errorMessage = err.message;
         }
       }

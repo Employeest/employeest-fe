@@ -4,46 +4,78 @@ import {
   ProjectCreatePayload, ProjectUpdatePayload,
   TaskCreatePayload, TaskUpdatePayload,
   WorkLogCreatePayload, WorkLogUpdatePayload,
-  ChartResponse, OwnerDashboardData, EmployeeDashboardData
-  // Assuming apiTypes.ts is in ../types/apiTypes.ts, adjust if necessary
-} from '../types/apiTypes';
+  ChartResponse, OwnerDashboardData, EmployeeDashboardData,
+  Team, // Added Team
+  TaskComment, // Added TaskComment if you plan to use it via apiService directly
+  TeamMemberCreatePayload, // Added for creating team members
+  TeamCreatePayload, // Added for creating teams
+  TaskHistory,
+  TeamMember,
+  TeamUpdatePayload,
+  TeamMemberUpdatePayload
+} from '../types/apiTypes'; // Ensure Team is exported from apiTypes.ts
 
-const API_BASE_URL = process.env.REACT_APP_CLIENT_BASE_URL || 'http://localhost:8000/api/v1';
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000/api/v1';
+
 
 interface FetchOptions extends RequestInit {
   params?: Record<string, any>;
 }
 
-// Helper function for fetch requests (remains the same)
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let errorData;
     try {
       errorData = await response.json();
     } catch (e) { /* Not JSON or empty */ }
-    const errorMessage = errorData?.detail || errorData?.message || JSON.stringify(errorData) || response.statusText || `HTTP error ${response.status}`;
+    // Try to extract a more specific message
+    const specificError = errorData?.detail || errorData?.message || 
+                         (typeof errorData === 'object' && errorData !== null ? Object.values(errorData).flat().join(' ') : null);
+    const errorMessage = specificError || JSON.stringify(errorData) || response.statusText || `HTTP error ${response.status}`;
     throw new Error(errorMessage);
   }
   const contentType = response.headers.get('content-type');
   if (contentType && contentType.includes('application/json')) {
-    return response.json() as Promise<T>;
+    // Handle cases where the response might be empty but still JSON (e.g., 204 No Content with an empty JSON body)
+    const text = await response.text();
+    if (!text) {
+        return Promise.resolve(undefined as unknown as T);
+    }
+    try {
+        return JSON.parse(text) as T;
+    } catch (e) {
+        console.error("Failed to parse JSON response:", e, "Response text:", text);
+        throw new Error("Invalid JSON response from server.");
+    }
   }
-  return Promise.resolve(undefined as unknown as T);
+  return Promise.resolve(undefined as unknown as T); // For non-JSON responses like 204 No Content
 }
+
 
 async function apiFetch<T>(endpoint: string, options: FetchOptions = {}): Promise<T> {
   const { params, ...fetchOptions } = options;
   let url = `${API_BASE_URL}${endpoint}`;
 
   if (params) {
-    const queryParams = new URLSearchParams(params);
-    url += `?${queryParams.toString()}`;
+    const queryParams = new URLSearchParams();
+    for (const key in params) {
+        if (params[key] !== undefined && params[key] !== null) { // Ensure only defined values are added
+            queryParams.append(key, params[key].toString());
+        }
+    }
+    if (queryParams.toString()) { // Only add '?' if there are actual parameters
+        url += `?${queryParams.toString()}`;
+    }
   }
+
 
   const token = localStorage.getItem('authToken');
   const headers = new Headers(fetchOptions.headers || {});
-  headers.set('Content-Type', 'application/json');
-  if (token && !endpoint.startsWith('/auth/login') && !endpoint.startsWith('/auth/register')) { // Don't send token for login/register
+  if (!headers.has('Content-Type') && !(fetchOptions.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
+  
+  if (token && !endpoint.startsWith('/auth/login') && !endpoint.startsWith('/auth/register')) {
     headers.set('Authorization', `Token ${token}`);
   }
 
@@ -59,8 +91,6 @@ async function apiFetch<T>(endpoint: string, options: FetchOptions = {}): Promis
 // --- Authentication Service ---
 const authService = {
   login: async (credentials: LoginCredentials): Promise<AuthTokenResponse> => {
-    // DRF's obtain_auth_token expects 'username' and 'password'.
-    // It's important that the LoginCredentials passed in has 'username'.
     const data = await apiFetch<AuthTokenResponse>('/auth/login/', {
       method: 'POST',
       body: JSON.stringify(credentials),
@@ -72,7 +102,6 @@ const authService = {
   },
 
   register: async (userData: RegistrationData): Promise<User> => {
-    // The backend UserRegistrationAPIView expects username, email, password, password2, etc.
     return apiFetch<User>('/auth/register/', {
       method: 'POST',
       body: JSON.stringify(userData),
@@ -83,10 +112,9 @@ const authService = {
     const token = localStorage.getItem('authToken');
     if (token) {
       try {
-        // Attempt to invalidate token on server-side
         await apiFetch<void>('/auth/logout/', { method: 'POST' });
       } catch (error) {
-        console.warn('Server-side logout failed or not supported for this token type, clearing local token only.', error);
+        console.warn('Server-side logout failed or not supported, clearing local token only.', error);
       }
     }
     localStorage.removeItem('authToken');
@@ -98,7 +126,7 @@ const authService = {
   },
 };
 
-// --- Project Service (remains the same as your provided version) ---
+// --- Project Service ---
 const projectService = {
   getAll: async (queryParams?: Record<string, any>): Promise<{ count: number; results: Project[] } | Project[]> => {
     return apiFetch<{ count: number; results: Project[] } | Project[]>('/projects/', { params: queryParams });
@@ -135,7 +163,7 @@ const projectService = {
   },
 };
 
-// --- Task Service (remains the same as your provided version) ---
+// --- Task Service ---
 const taskService = {
   getAll: async (queryParams?: Record<string, any>): Promise<{ count: number; results: Task[] } | Task[]> => {
     return apiFetch<{ count: number; results: Task[] } | Task[]>('/tasks/', { params: queryParams });
@@ -174,9 +202,26 @@ const taskService = {
       method: 'POST',
     });
   },
+  // Add methods for task comments and history if needed
+  getComments: async (taskId: number): Promise<TaskComment[]> => {
+    // apiFetch will use handleResponse. If handleResponse correctly returns [] for empty JSON arrays
+    // or for "no content" when an array is expected, this should be fine.
+    const comments = await apiFetch<TaskComment[]>(`/tasks/${taskId}/comments/`);
+    return comments || []; // Defensive: ensure an array is always returned from this service call.
+  },
+  addComment: async (taskId: number, commentData: { comment: string }): Promise<TaskComment> => {
+    return apiFetch<TaskComment>(`/tasks/${taskId}/comments/`, {
+      method: 'POST',
+      body: JSON.stringify(commentData),
+    });
+  },
+  getHistory: async (taskId: number): Promise<TaskHistory[]> => {
+    const history = await apiFetch<TaskHistory[]>(`/tasks/${taskId}/history/`);
+    return history || []; // Defensive: ensure an array is always returned.
+  },
 };
 
-// --- WorkLog Service (remains the same as your provided version) ---
+// --- WorkLog Service ---
 const workLogService = {
   getAll: async (queryParams?: Record<string, any>): Promise<{ count: number; results: WorkLog[] } | WorkLog[]> => {
     return apiFetch<{ count: number; results: WorkLog[] } | WorkLog[]>('/worklogs/', { params: queryParams });
@@ -207,7 +252,7 @@ const workLogService = {
   },
 };
 
-// --- Statistics & Dashboard Service (remains the same as your provided version) ---
+// --- Statistics & Dashboard Service ---
 const statisticsService = {
   getBusinessStoryPointsMonthly: async (): Promise<ChartResponse> => {
     return apiFetch<ChartResponse>('/statistics/business/story-points-monthly/');
@@ -223,12 +268,69 @@ const statisticsService = {
   },
 };
 
-
+// --- User Service ---
 const userService = {
-  // Assuming paginated or direct array response similar to other getAll methods
   getAll: async (params?: Record<string, any>): Promise<{ count: number; results: User[] } | User[]> => {
     return apiFetch<{ count: number; results: User[] } | User[]>('/users/', { params });
-  }
+  },
+  // getById: async (id: number): Promise<User> => { // If you need to fetch a single user's public profile
+  //   return apiFetch<User>(`/users/${id}/`);
+  // }
+};
+
+// --- Team Service ---
+const teamService = {
+  getAll: async (queryParams?: Record<string, any>): Promise<{ count: number; results: Team[] } | Team[]> => {
+    // The backend TeamViewSet is paginated by default.
+    return apiFetch<{ count: number; results: Team[] } | Team[]>(`/teams/`, { params: queryParams });
+  },
+  getById: async (id: number): Promise<Team> => {
+    return apiFetch<Team>(`/teams/${id}/`);
+  },
+  create: async (data: TeamCreatePayload): Promise<Team> => {
+    return apiFetch<Team>('/teams/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+  update: async (id: number, data: TeamUpdatePayload): Promise<Team> => {
+    return apiFetch<Team>(`/teams/${id}/`, {
+      method: 'PUT', // or PATCH for partial updates
+      body: JSON.stringify(data),
+    });
+  },
+  partialUpdate: async (id: number, data: Partial<TeamUpdatePayload>): Promise<Team> => {
+    return apiFetch<Team>(`/teams/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+  delete: async (id: number): Promise<void> => {
+    await apiFetch<void>(`/teams/${id}/`, { method: 'DELETE' });
+  },
+
+  // Team Members
+  getTeamMembers: async (teamId: number, queryParams?: Record<string, any>): Promise<{ count: number; results: TeamMember[] } | TeamMember[]> => {
+    return apiFetch<{ count: number; results: TeamMember[] } | TeamMember[]>(`/teams/${teamId}/members/`, { params: queryParams });
+  },
+  addTeamMember: async (teamId: number, memberData: TeamMemberCreatePayload): Promise<TeamMember> => {
+    return apiFetch<TeamMember>(`/teams/${teamId}/members/`, {
+      method: 'POST',
+      body: JSON.stringify(memberData),
+    });
+  },
+  getTeamMemberById: async (teamId: number, memberId: number): Promise<TeamMember> => {
+    return apiFetch<TeamMember>(`/teams/${teamId}/members/${memberId}/`);
+  },
+  updateTeamMember: async (teamId: number, memberId: number, data: TeamMemberUpdatePayload): Promise<TeamMember> => {
+    return apiFetch<TeamMember>(`/teams/${teamId}/members/${memberId}/`, {
+      method: 'PATCH', // Or PUT if full update is required
+      body: JSON.stringify(data),
+    });
+  },
+  removeTeamMember: async (teamId: number, memberId: number): Promise<void> => {
+    await apiFetch<void>(`/teams/${teamId}/members/${memberId}/`, { method: 'DELETE' });
+  },
 };
 
 export const apiService = {
@@ -237,5 +339,6 @@ export const apiService = {
   tasks: taskService,
   workLogs: workLogService,
   statistics: statisticsService,
-  users: userService
+  users: userService,
+  teams: teamService,
 };
