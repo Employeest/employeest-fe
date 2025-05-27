@@ -1,9 +1,8 @@
-// src/pages/DashboardPage.tsx
 import React from 'react';
-import DashboardLayout from '../components/layout/DashboardLayout';
+import MainDashboardContent from '../components/layout/MainDashboardContent'; // Import directly
 
 const DashboardPage: React.FC = () => {
-  return <DashboardLayout />;
+  return <MainDashboardContent />;
 };
 
 export default DashboardPage;
